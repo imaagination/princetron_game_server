@@ -15,7 +15,7 @@ EventMachine.run do
 
 		ws.onopen do
 			puts "Received new connection"
-			@connections[ws] = new Player(ws)
+			@connections[ws] = Player.new(ws)
 		end
 
 		ws.onmessage do |mess|
@@ -43,7 +43,7 @@ EventMachine.run do
 						end
 					end
 				end
-				@games[player.username] = new Game(player.username)
+				@games[player.username] = Game.new(player.username)
 				EventMachine::Timer.new(10) do
 					@games[player.username].enter_arena
 					@games[player.username].start
