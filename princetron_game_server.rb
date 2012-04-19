@@ -3,8 +3,8 @@ require 'em-websocket'
 require 'set'
 require 'json'
 
-@lobby_sockets = []
-@player_games = {}
+@connections = {}
+@games = {}
 
 EventMachine.run do
 
@@ -15,39 +15,46 @@ EventMachine.run do
 
 		ws.onopen do
 			puts "Received new connection"
+			@connections[ws] = new Player(ws)
 		end
 
 		ws.onmessage do |mess|
 			puts "Received #{mess}"
 		  parsed_mess = JSON.parse(mess)
+			player = @connections[ws]
+			if parsed_mess.key? "login"
+				player.login(parsed_mess)
+			end
+			if parsed_mess.key? "invitation"
+				player.invite(parsed_mess)
+			end
+			if parsed_mess.key? "acceptInvitation"
+				if @games.key? player.inviter
+					@games[player.inviter].add player
+					player.game = @games[player.inviter]
+					player.state = :INVITATION_ACCEPTED
+				end	
+			end
 			if parsed_mess.key? "readyToPlay"
-				if @lobby_sockets.empty?
-					puts "== Adding new player to lobby"
-					@lobby_sockets << ws
-				else
-					puts "== Creating new game"
-					s = Set.new [ ws, @lobby_sockets.shift]
-					s.each { |p| @player_games[p] = s }
-					s.each { |p| p.send({ "enterArena" => { "waitTime" => 0}}.to_json) }
+				if parsed_mess.key? "invitations"
+					@connections.each_value do |c|
+						if parsed_mess["readyToPlay"]["invitations"].index(c) != nil
+							c.send_invitation(player.username)
+						end
+					end
+				end
+				@games[player.username] = new Game(player.username)
+				EventMachine::Timer.new(10) do
+					@games[player.username].enter_arena
+					@games[player.username].start
 				end
 			end
 			if parsed_mess.key? "turn"
-				puts "== Received a turn message"
-				new_mess = { "opponentTurn" => parsed_mess["turn"] }
-				if @player_games.key? ws
-					@player_games[ws].each do |s| 
-						s.send new_mess.to_json unless ws == s
-					end
-				end
+				player.game.turn(parsed_mess, player)
 			end
 			if parsed_mess.key? "collision"
-				if @player_games.key? ws
-					@player_games[ws].each do |s|
-						s.send({ "endGame" => { "result" => "win" }}.to_json) unless ws == s
-					end
-	
-					ws.send({ "endGame" => { "result" => "loss" }}.to_json)
-				end
+				player.game.loser(player)
+				ws.send({ "endGame" => { "result" => "loss" }}.to_json)
 			end
 		end
 
