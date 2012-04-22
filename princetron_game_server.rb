@@ -2,6 +2,8 @@ require 'eventmachine'
 require 'em-websocket'
 require 'set'
 require 'json'
+require './Player'
+require './Game'
 
 @connections = {}
 @games = {}
@@ -19,32 +21,43 @@ EventMachine.run do
 		end
 
 		ws.onmessage do |mess|
-			puts "Received #{mess}"
 		  parsed_mess = JSON.parse(mess)
 			player = @connections[ws]
-			if parsed_mess.key? "login"
+			puts "Received #{mess} from #{player.username}"
+			if parsed_mess.key? "logIn"
 				player.login(parsed_mess)
+				player.socket.send({ "lobby" => { "users" => @connections.values.map{|p| p.username} }}.to_json)
 			end
 			if parsed_mess.key? "invitation"
 				player.invite(parsed_mess)
 			end
 			if parsed_mess.key? "acceptInvitation"
+				puts "Received an acceptance from #{player.username}"
 				if @games.key? player.inviter
+					puts "Inviter has an active game"
 					@games[player.inviter].add player
 					player.game = @games[player.inviter]
 					player.state = :INVITATION_ACCEPTED
+				else
+					puts "#{player.inviter} does not have a game, #{player.username} cannot accept invitation"
 				end	
 			end
 			if parsed_mess.key? "readyToPlay"
-				if parsed_mess.key? "invitations"
+				if parsed_mess["readyToPlay"].key? "invitations"
 					@connections.each_value do |c|
-						if parsed_mess["readyToPlay"]["invitations"].index(c) != nil
+						if parsed_mess["readyToPlay"]["invitations"].index(c.username) != nil
+							puts "Sending invitation to #{c.username}"
 							c.send_invitation(player.username)
 						end
 					end
 				end
-				@games[player.username] = Game.new(player.username)
-				EventMachine::Timer.new(10) do
+				puts "Opening a game for #{player.username}"
+				@games[player.username] = Game.new(player)
+				player.game = @games[player.username]
+				if @games.key? player.username
+					puts "#{player.username} now has an open game"
+				end
+				EventMachine::Timer.new(5) do
 					@games[player.username].enter_arena
 					@games[player.username].start
 				end
@@ -53,14 +66,15 @@ EventMachine.run do
 				player.game.turn(parsed_mess, player)
 			end
 			if parsed_mess.key? "collision"
-				player.game.loser(player)
-				ws.send({ "endGame" => { "result" => "loss" }}.to_json)
+				unless player.game == nil
+					player.game.loser(player)
+				end
 			end
 		end
 
 		ws.onclose do
 			puts "Connection closed"
-			@lobby_sockets.delete ws
+			@connections.delete(ws)
 		end
 	end
 

@@ -8,8 +8,8 @@ class Player
 
 	def login(json)
 		if @state == :NEW
-			if json["login"].key? "user"
-				@username = json["login"]["user"]
+			if json["logIn"].key? "user"
+				@username = json["logIn"]["user"]
 				@state = :IN_LOBBY	
 			end
 		end
@@ -25,6 +25,7 @@ class Player
 	end
 
 	def send_invitation(username) 
+		@inviter = username
 		@socket.send({ "invitation" => { "user" => username }}.to_json)
 	end
 end
