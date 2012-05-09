@@ -1,5 +1,9 @@
+require 'set'
+
 class Player
 	attr_accessor :state, :username, :inviter, :game, :socket
+
+	@@usernames = Set.new
 
 	def initialize(socket)
 		@state = :NEW
@@ -9,10 +13,20 @@ class Player
 	def login(json)
 		if @state == :NEW
 			if json["logIn"].key? "user"
-				@username = json["logIn"]["user"]
-				@state = :IN_LOBBY	
+				proposed_name = json["logIn"]["user"]
+				unless @@usernames.include? proposed_name
+					@@usernames.add proposed_name
+					@username = json["logIn"]["user"]
+					@state = :IN_LOBBY	
+					return true
+				end
 			end
 		end
+		return false
+	end
+
+	def logout
+		@@usernames.delete @username
 	end
 
 	def invite(json)

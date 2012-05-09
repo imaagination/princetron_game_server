@@ -25,8 +25,18 @@ EventMachine.run do
 			player = @connections[ws]
 			puts "Received #{mess} from #{player.username}"
 			if parsed_mess.key? "logIn"
-				player.login(parsed_mess)
-				player.socket.send({ "lobby" => { "users" => @connections.values.map{|p| p.username} }}.to_json)
+				if player.login(parsed_mess)
+					puts "Sending loginResult success"
+					player.socket.send({"loginResult"=>{"result"=>"success"}}.to_json)
+					puts "Sending lobby"
+					player.socket.send({ "lobby" => { "users" => @connections.values.map{|p| p.username}.compact }}.to_json)
+					@connections.each_pair do |k,v| 
+						k.send({"lobbyUpdate"=>{"entered"=>true, "user"=>player.username}}.to_json) unless v.username.nil? or v == player
+					end
+				else
+					puts "Sending loginResult failure"
+					player.socket.send({"loginResult"=>{"result"=>"failure"}}.to_json)
+				end
 			end
 			if parsed_mess.key? "invitation"
 				player.invite(parsed_mess)
@@ -44,6 +54,7 @@ EventMachine.run do
 			end
 			if parsed_mess.key? "readyToPlay"
 				if parsed_mess["readyToPlay"].key? "invitations"
+					total_invites = parsed_mess["readyToPlay"]["invitations"].size
 					@connections.each_value do |c|
 						if parsed_mess["readyToPlay"]["invitations"].index(c.username) != nil
 							puts "Sending invitation to #{c.username}"
@@ -52,14 +63,13 @@ EventMachine.run do
 					end
 				end
 				puts "Opening a game for #{player.username}"
-				@games[player.username] = Game.new(player)
+				@games[player.username] = Game.new(player, total_invites)
 				player.game = @games[player.username]
 				if @games.key? player.username
 					puts "#{player.username} now has an open game"
 				end
 				EventMachine::Timer.new(5) do
-					@games[player.username].enter_arena
-					@games[player.username].start
+					@games[player.username].invite_timeout
 				end
 			end
 			if parsed_mess.key? "turn"
@@ -74,6 +84,11 @@ EventMachine.run do
 
 		ws.onclose do
 			puts "Connection closed"
+			@connections.each_pair do |k,v| 
+				k.send({"lobbyUpdate"=>{"entered"=>false, "user"=>@connections[ws].username}}.to_json) unless v.username.nil?
+				puts "Sending #{{"lobbyUpdate"=>{"entered"=>false, "user"=>@connections[ws].username}}.to_json} to #{v.username}" unless v.username.nil?
+			end
+			@connections[ws].logout
 			@connections.delete(ws)
 		end
 	end
