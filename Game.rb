@@ -15,6 +15,7 @@ class Game
 		@accepted_invites = 0
 	end
 
+	# Add a player to this game
 	def add(new_player)
 		if @state == :OPEN
 			@players << new_player
@@ -26,6 +27,7 @@ class Game
 		end
 	end
 
+	# Send specification for game to all players in game
 	def enter_arena
 		if @state == :OPEN
 			if @players.count == 2
@@ -103,6 +105,7 @@ class Game
 		@state = :READY
 	end
 
+	# Tell clients to start game
 	def start
 		if @state == :READY
 			@players.each do |p|
@@ -113,6 +116,13 @@ class Game
 		end
 	end
 
+	# Notify client that nobody wants to play with them (loner)
+	def invite_rejected
+		@players[0].socket.send({"inviteRejected"=>true}.to_json)		
+		@state = :CLOSED
+	end
+
+	# Triggered by invitation timeout
 	def invite_timeout
 		if @state == :OPEN
 			if @players.size > 1
@@ -120,10 +130,13 @@ class Game
 				EventMachine::Timer.new(1) do
 					self.start
 			  end
+			else 
+				self.invite_rejected
 			end
 		end
 	end
 
+	# Notify opponents of turns
 	def turn(json, player)
 		index = @players.index player
 		turnMess = json["turn"]
@@ -136,30 +149,34 @@ class Game
 		end
 	end
 
-	def loser(loser)
-		index = @players.index loser
-		@players.each do |p|
-			p.socket.send({"gameResult" => 
-				{ "playerId" => index, "result" => "loss"}}.to_json)
-		end
-		@active_players.delete loser
-		@active_players.compact!
-		if @active_players.length == 1
-			winner_index = @players.index @active_players[0]
+	# Handle players losing
+	def loser(loser, timestamp)
+		if @state == :PLAYING
+			index = @players.index loser
 			@players.each do |p|
 				p.socket.send({"gameResult" => 
-					{ "playerId" => winner_index, "result" => "win"}}.to_json)
-				p.socket.send({"endGame" => true}.to_json)
+					{ "playerId" => index, "result" => "loss", "timestamp" => timestamp}}.to_json)
 			end
-			# Report result to metagame
-			puts "Reporting result"
-			winner = @players[winner_index]
-			losers = Array.new(@players)
-			losers.delete_at winner_index
-			losers.compact!
-			cur_time = Time.now.strftime("%m/%d/%Y:%H:%M:%S")
-			options = { :body => {:time => cur_time, :winner => winner.username, :losers => losers.map{|p| p.username}.join(',') } }
-			HTTParty.post("http://www.princetron.com/game/", options)
+			@active_players.delete loser
+			@active_players.compact!
+			if @active_players.length == 1
+				@state = :CLOSED
+				winner_index = @players.index @active_players[0]
+				@players.each do |p|
+					p.socket.send({"gameResult" => 
+						{ "playerId" => winner_index, "result" => "win"}}.to_json)
+					p.socket.send({"endGame" => true}.to_json)
+				end
+				# Report result to metagame
+				puts "Reporting result"
+				winner = @players[winner_index]
+				losers = Array.new(@players)
+				losers.delete_at winner_index
+				losers.compact!
+				cur_time = Time.now.strftime("%m/%d/%Y:%H:%M:%S")
+				options = { :body => {:time => cur_time, :winner => winner.username, :losers => losers.map{|p| p.username}.join(',') } }
+				HTTParty.post("http://www.princetron.com/game/", options)
+			end
 		end
 	end
 end
